@@ -24,17 +24,12 @@ except ImportError:
 
 from fastapi import params
 from fastapi._compat import (
-	BaseConfig,
 	ModelField,
 	Undefined,
-	UndefinedType,
-	Validator,
-	_get_model_config,
-	_model_dump,
 	get_cached_model_fields,
 	get_missing_field_error,
-	is_bytes_field,
-	is_bytes_sequence_field,
+	is_bytes_or_nonable_bytes_annotation,
+	is_bytes_sequence_annotation,
 	lenient_issubclass,
 	sequence_types,
 	serialize_sequence_value,
@@ -85,15 +80,8 @@ def _prepare_response_content(
 	exclude_none: bool = False,
 ) -> Any:
 	if isinstance(res, BaseModel):
-		read_with_orm_mode = getattr(_get_model_config(res), "read_with_orm_mode", None)
-		if read_with_orm_mode:
-			# Let from_orm extract the data from this model instead of converting
-			# it now to a dict.
-			# Otherwise, there's no way to extract lazy data that requires attribute
-			# access instead of dict iteration, e.g. lazy relationships.
-			return res
-		return _model_dump(
-			res,
+		return res.model_dump(
+			mode="json",
 			by_alias=True,
 			exclude_unset=exclude_unset,
 			exclude_defaults=exclude_defaults,
@@ -184,15 +172,11 @@ def serialize_response(
 def create_model_field(
 	name: str,
 	type_: Any,
-	class_validators: Optional[Dict[str, Validator]] = None,
 	default: Optional[Any] = Undefined,
-	required: Union[bool, UndefinedType] = Undefined,
-	model_config: Type[BaseConfig] = BaseConfig,
 	field_info: Optional[FieldInfo] = None,
 	alias: Optional[str] = None,
 	mode: Literal["validation", "serialization"] = "validation",
 ) -> ModelField:
-	class_validators = class_validators or {}
 	field_info = field_info or FieldInfo(annotation=type_, default=default, alias=alias)
 	kwargs = {"name": name, "field_info": field_info, "mode": mode}
 
@@ -221,10 +205,10 @@ def _extract_form_body(
 	for field in body_fields:
 		value = _get_multidict_value(field, received_body)
 
-		if isinstance(first_field_info, params.File) and is_bytes_field(field) and isinstance(value, UploadFile):
+		if isinstance(first_field_info, params.File) and is_bytes_or_nonable_bytes_annotation(field.field_info.annotation) and isinstance(value, UploadFile):
 			# Synchronously read the file content using the underlying file object
 			value = value.file.read()
-		elif is_bytes_sequence_field(field) and isinstance(first_field_info, params.File) and value_is_sequence(value):
+		elif is_bytes_sequence_annotation(field.field_info.annotation) and isinstance(first_field_info, params.File) and value_is_sequence(value):
 			# For sequence types, read each file sequentially
 			assert isinstance(value, sequence_types)  # type: ignore[arg-type]
 			results: List[Union[bytes, str]] = []
@@ -259,8 +243,8 @@ def request_body_to_args(
 	first_field = body_fields[0]
 	body_to_process = received_body
 	fields_to_extract: List[ModelField] = body_fields
-	if single_not_embedded_field and lenient_issubclass(first_field.type_, BaseModel):
-		fields_to_extract = get_cached_model_fields(first_field.type_)
+	if single_not_embedded_field and lenient_issubclass(first_field.field_info.annotation, BaseModel):
+		fields_to_extract = get_cached_model_fields(first_field.field_info.annotation)
 	if isinstance(received_body, FormData):
 		body_to_process = _extract_form_body(fields_to_extract, received_body)
 	if single_not_embedded_field:
