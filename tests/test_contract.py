@@ -389,3 +389,36 @@ def test_state_key_survives_malformed_release(monkeypatch, rel):
 	monkeypatch.setitem(frappe.local.conf, "frappeapi_release", rel)
 	monkeypatch.setattr(frappe, "log_error", lambda *a, **k: None)
 	assert state.key("otp:test", "+201099900010").startswith(f"{frappe.local.site}:default:otp:test:")
+
+
+class _Base(Exception):
+	pass
+
+
+def _mro_app(name, contract_app):
+	app = FrappeAPI(title=name, fastapi_path_format=True, contract_app=contract_app)
+	app.exception_handler(_Base)(lambda req, exc: JSONResponse(content={"base": str(exc)}, status_code=400))
+
+	@app.get(f"/{name}/v1/late")
+	def late() -> dict:
+		class Late(_Base):  # defined after the handlers were registered, like a lazily imported module
+			pass
+
+		raise Late("late class")
+
+	return app
+
+
+mro_contract = _mro_app("mc", "legacy_app")
+mro_plain = _mro_app("mp", None)
+
+
+def test_contract_app_resolves_a_subclass_by_mro():
+	r = _call(mro_contract, "/mc/v1/late", GOOD)
+	assert (r.status_code, r.get_json()) == (400, {"base": "late class"})
+
+
+def test_opt_out_app_keeps_exact_type_lookup():
+	r = _call(mro_plain, "/mp/v1/late", {})
+	assert r.status_code == 500
+	assert r.get_json() == {"detail": "Late('late class')"}
