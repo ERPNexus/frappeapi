@@ -44,6 +44,7 @@ class FrappeAPI:
 		] = None,
 		# Feature flag for OpenAPI path style
 		fastapi_path_format: bool = False,
+		contract_app: Optional[str] = None,
 	):
 		self.title = title
 		self.summary = summary
@@ -80,6 +81,12 @@ class FrappeAPI:
 			default_response_class=default_response_class,
 			fastapi_path_format=self.fastapi_path_format,
 		)
+		self.router.contract_app = contract_app
+		from frappeapi import errors
+
+		# Every app: frappeapi's helpers raise ApiError subclasses (resolved by MRO in the route).
+		# No existing app raises ApiError, so other responses are unchanged.
+		self.exception_handlers.setdefault(errors.ApiError, errors.handle)
 		self.openapi_schema: Optional[Dict[str, Any]] = None
 
 		register_app(self)

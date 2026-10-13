@@ -4,6 +4,26 @@ Better APIs for Frappe.
 
 FrappeAPI brings FastAPI-style routing and validation to the Frappe Framework. Define endpoints with type hints, get automatic validation and documentation.
 
+## Contract and identity helpers (0.5.0)
+
+Seven opt-in modules. Nothing changes for an app that does not use them.
+
+| Module | Purpose |
+|--------|---------|
+| `frappeapi.errors` | Core-only error registry (`errors.json`) and `ApiError` types. An app calls `errors.register(app, codes, legacy_codes)` at import to add its own codes and the old spellings its legacy clients expect. |
+| `frappeapi.contract` | Client contract and request IDs. Enabled per app with `FrappeAPI(contract_app="myapp")`; apps without it are untouched. Release and client policy come from `frappe.conf.frappeapi_release`; with no config every client is unidentified and gets legacy codes. |
+| `frappeapi.idempotency` | `body_hash` and `replay` for `client_operation_id` retries. |
+| `frappeapi.state` | Redis connection and key helper shared by the modules below. |
+| `frappeapi.identity` | Mobile normalization, unique-mobile checks, and a Redis mobile lock for find-or-create user. |
+| `frappeapi.otp` | SMS one-time codes in Redis (hashed, attempt-limited). |
+| `frappeapi.ratelimit` | Fixed-window rate limit buckets per identifier and per IP. |
+
+Redis state uses `frappe.conf.frappeapi_redis`, else `redis_queue`; never `redis_cache`, which evicts keys. Any Redis failure (or no Redis configured) fails closed by raising `errors.ServiceUnavailable`.
+
+Every `FrappeAPI` app, with or without `contract_app`, renders an `errors.ApiError` (and any subclass, including your own `class TenantSuspended(errors.ApiError): code, status = "tenant_suspended", 403`) as the `{success, message, error_code, data}` envelope with its status: 503 `service_unavailable`, 429 `rate_limited`, 409 `idempotency_conflict`, 426 `upgrade_required`. Only contract apps also get the contract headers and legacy-code rewrite. A plain `@frappe.whitelist` endpoint gets the status (via `http_status_code`) but Frappe's own error body.
+
+Mobile numbers: `identity.normalize_mobile(value, default_country_code=None)` falls back to `frappe.conf.frappeapi_default_country_code` (e.g. `"20"`). With neither set, only international forms (`+CC…` or `00CC…`) are accepted; national forms such as `010…` are refused.
+
 ## Documentation
 
 [Documentation](https://0xsirsaif.github.io/frappeapi/)

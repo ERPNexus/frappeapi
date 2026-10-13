@@ -15,4 +15,4 @@ def extract_endpoint_relative_path(func):
 		sub_path_parts[-1] = os.path.splitext(file_name)[0]
 		return ".".join(sub_path_parts)
 	except ValueError:
-		return None
+		return func.__module__  # ponytail: outside apps/ the module name is the dotted path
