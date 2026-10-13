@@ -150,3 +150,7 @@ combine-as-imports = true
 Homepage = "https://github.com/0xsirsaif/frappe-api"
 Documentation = "https://0xsirsaif.github.io/frappe-api/"
 Repository = "https://github.com/0xsirsaif/frappe-api"
+
+[tool.pytest.ini_options]
+# pytest-frappe (in the bench env) autouses a db_instance fixture needing --test-site; tests/conftest.py owns the site.
+addopts = "-p no:pytest_frappe"

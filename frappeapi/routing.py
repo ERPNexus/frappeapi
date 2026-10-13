@@ -343,6 +343,8 @@ def parse_and_validate_request(
 
 
 class APIRoute(FastAPIRoute):
+	contract_app: Optional[str] = None
+
 	def __init__(
 		self,
 		endpoint: Callable,
@@ -514,6 +516,13 @@ class APIRoute(FastAPIRoute):
 		self.exception_handlers = {} if exception_handlers is None else exception_handlers
 
 	def handle_request(self, *args, **kwargs) -> WerkzeugResponse:
+		if not self.contract_app:
+			return self._handle_request(*args, **kwargs)
+		from frappeapi import contract
+
+		return contract.run(self.contract_app, lambda: self._handle_request(*args, **kwargs), self.exception_handlers)
+
+	def _handle_request(self, *args, **kwargs) -> WerkzeugResponse:
 		# Runtime warning if a dotted path is called for an endpoint that was
 		# defined with FastAPI-style path parameters when fastapi_path_format is False.
 		if (
@@ -731,8 +740,16 @@ class APIRoute(FastAPIRoute):
 				# First check if there is a custom exception handler for this exception.
 				# If not, return a 500 response with the exception details.
 				# Subress the exception details to avoid exposing sensitive information.
-				if self.exception_handlers.get(type(exc)):
-					response = self.exception_handlers[type(exc)](request, exc)
+				handler = self.exception_handlers.get(type(exc))
+				if not handler:
+					from frappeapi.errors import ApiError
+
+					# Only ApiError resolves by MRO (app-defined subclasses); other lookups stay exact-type.
+					if isinstance(exc, ApiError):
+						handlers = self.exception_handlers
+						handler = next((handlers[c] for c in type(exc).__mro__ if handlers.get(c)), None)
+				if handler:
+					response = handler(request, exc)
 				else:
 					response = JSONResponse(content={"detail": repr(exc)}, status_code=500)
 			else:
@@ -805,6 +822,7 @@ class APIRouter:
 		self.default_response_class = default_response_class
 		self.routes: List[APIRoute] = []
 		self.exception_handlers = exception_handlers
+		self.contract_app: Optional[str] = None
 		self.title = title
 		self.version = version
 		self.openapi_version = openapi_version
@@ -887,6 +905,7 @@ class APIRouter:
 				fastapi_path_format_flag=self.fastapi_path_format,
 				user_defined_fastapi_path_segment=path,
 			)
+			route.contract_app = self.contract_app
 			self.routes.append(route)
 
 			# When the route is called, it will be handled by the route's handle_request method

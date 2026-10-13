@@ -1,0 +1,7 @@
+{
+  "contract": 2,
+  "core": {
+    "validation_error": 400, "unauthenticated": 401, "permission_denied": 403, "not_found": 404,
+    "idempotency_conflict": 409, "upgrade_required": 426, "rate_limited": 429, "service_unavailable": 503
+  }
+}
