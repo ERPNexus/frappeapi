@@ -88,6 +88,7 @@ def test_explicit_country_code_wins_over_conf():
 @pytest.mark.parametrize("raw", ["01099900001", "1099900001", "201099900001", "0501234567"])
 def test_local_forms_rejected_without_country_code(monkeypatch, raw):
 	monkeypatch.delitem(frappe.local.conf, "frappeapi_default_country_code", raising=False)
+	monkeypatch.setattr(identity, "_site_country_code", lambda: None)
 	with pytest.raises(ValueError, match="invalid mobile number|required"):
 		identity.normalize_mobile(raw)
 	assert identity.user_by_mobile(raw) is None
@@ -116,8 +117,17 @@ def test_malformed_country_code_refused(cc):
 		identity.normalize_mobile("0501234567", default_country_code=cc)
 
 
+def test_country_code_falls_back_to_the_site_country(monkeypatch):
+	monkeypatch.delitem(frappe.local.conf, "frappeapi_default_country_code", raising=False)
+	monkeypatch.setattr(frappe.db, "get_single_value", lambda dt, f: "Saudi Arabia")
+	assert identity.normalize_mobile("0501234567") == "+966501234567"
+	monkeypatch.setitem(frappe.local.conf, "frappeapi_default_country_code", "20")  # conf overrides the site country
+	assert identity.normalize_mobile("01099900001") == "+201099900001"
+
+
 def test_country_code_threads_through_callers(monkeypatch):
 	monkeypatch.delitem(frappe.local.conf, "frappeapi_default_country_code", raising=False)
+	monkeypatch.setattr(identity, "_site_country_code", lambda: None)
 	_user(f"fa-cc-{RUN}@example.com", M[4])
 	assert identity.user_by_mobile(LOCAL[4]) is None
 	assert identity.user_by_mobile(LOCAL[4], default_country_code="20") == f"fa-cc-{RUN}@example.com"

@@ -16,8 +16,20 @@ LOCK_TTL_MS = 15_000
 _RELEASE = "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0"
 
 
+def _site_country_code() -> str | None:
+	"""The dial code of the site's country (System Settings > Country)."""
+	from frappe.geo.country_info import get_country_info
+
+	country = frappe.db.get_single_value("System Settings", "country")
+	return (get_country_info(country) or {}).get("isd") if country else None
+
+
 def _country_code(default_country_code) -> str | None:
-	cc = default_country_code if default_country_code is not None else frappe.conf.get("frappeapi_default_country_code")
+	cc = default_country_code
+	if cc is None:
+		cc = frappe.conf.get("frappeapi_default_country_code")
+	if cc is None:
+		cc = _site_country_code()
 	if cc is None:
 		return None
 	cc = str(cc).strip().removeprefix("+")
@@ -29,8 +41,9 @@ def _country_code(default_country_code) -> str | None:
 def normalize_mobile(value: str, default_country_code: str | None = None) -> str:
 	"""Return +<country code><number>. International forms (+CC... or 00CC...) are
 	always accepted. National forms (0..., or the bare number with or without its
-	country code) need a country code: the argument, else
-	frappe.conf.frappeapi_default_country_code; with neither they are refused."""
+	country code) need a country code: the argument (e.g. the Company's country),
+	else frappe.conf.frappeapi_default_country_code, else the dial code of
+	System Settings > Country; with none of them they are refused."""
 	if not isinstance(value, str):
 		raise ValueError("mobile number is required")
 	raw = "".join(str(unicodedata.decimal(c)) if c.isdecimal() else c for c in value).strip()

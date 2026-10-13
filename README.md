@@ -22,7 +22,7 @@ Redis state uses `frappe.conf.frappeapi_redis`, else `redis_queue`; never `redis
 
 Every `FrappeAPI` app, with or without `contract_app`, renders an `errors.ApiError` (and any subclass, including your own `class TenantSuspended(errors.ApiError): code, status = "tenant_suspended", 403`) as the `{success, message, error_code, data}` envelope with its status: 503 `service_unavailable`, 429 `rate_limited`, 409 `idempotency_conflict`, 426 `upgrade_required`. Only contract apps also get the contract headers and legacy-code rewrite. A plain `@frappe.whitelist` endpoint gets the status (via `http_status_code`) but Frappe's own error body.
 
-Mobile numbers: `identity.normalize_mobile(value, default_country_code=None)` falls back to `frappe.conf.frappeapi_default_country_code` (e.g. `"20"`). With neither set, only international forms (`+CC…` or `00CC…`) are accepted; national forms such as `010…` are refused.
+Mobile numbers: `identity.normalize_mobile(value, default_country_code=None)` turns national forms (`010…`, `05…`) into `+CC…` using, in order: the `default_country_code` argument (e.g. the Company's country), `frappe.conf.frappeapi_default_country_code`, then the dial code of System Settings > Country (from Frappe's `country_info.json`). With none of them, only international forms (`+CC…` or `00CC…`) are accepted.
 
 ## Documentation
 

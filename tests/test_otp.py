@@ -113,7 +113,10 @@ def test_non_string_code_is_a_wrong_code(bad):
 def test_country_code_threads_through(monkeypatch):
 	import frappe
 
+	from frappeapi import identity
+
 	monkeypatch.delitem(frappe.local.conf, "frappeapi_default_country_code", raising=False)
+	monkeypatch.setattr(identity, "_site_country_code", lambda: None)
 	local = "0" + MOBILE[3:]
 	with pytest.raises(ValueError, match="international format"):
 		otp.issue(local, "test", lambda c: None)
