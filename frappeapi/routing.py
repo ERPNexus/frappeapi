@@ -744,8 +744,10 @@ class APIRoute(FastAPIRoute):
 				if not handler:
 					from frappeapi.errors import ApiError
 
-					# Only ApiError resolves by MRO (app-defined subclasses); other lookups stay exact-type.
-					if isinstance(exc, ApiError):
+					# MRO fallback: ApiError subclasses everywhere; any exception in a contract app
+					# (e.g. a frappe.ValidationError subclass first imported mid-request).
+					# Opt-out apps keep the exact-type lookup, so their responses are unchanged.
+					if isinstance(exc, ApiError) or self.contract_app:
 						handlers = self.exception_handlers
 						handler = next((handlers[c] for c in type(exc).__mro__ if handlers.get(c)), None)
 				if handler:
