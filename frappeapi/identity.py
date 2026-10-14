@@ -45,12 +45,12 @@ def normalize_mobile(value: str, default_country_code: str | None = None) -> str
 	else frappe.conf.frappeapi_default_country_code, else the dial code of
 	System Settings > Country; with none of them they are refused."""
 	if not isinstance(value, str):
-		raise ValueError("mobile number is required")
+		raise ValueError(_("mobile number is required"))
 	raw = "".join(str(unicodedata.decimal(c)) if c.isdecimal() else c for c in value).strip()
 	if not raw or not re.fullmatch(r"[+\d\s().-]+", raw):
-		raise ValueError("invalid mobile number")
+		raise ValueError(_("invalid mobile number"))
 	if raw.count("+") > 1 or ("+" in raw and not raw.startswith("+")):
-		raise ValueError("invalid mobile number")
+		raise ValueError(_("invalid mobile number"))
 	raw = re.sub(r"[\s().-]", "", raw)
 	if raw.startswith("00"):
 		raw = "+" + raw[2:]
@@ -59,7 +59,7 @@ def normalize_mobile(value: str, default_country_code: str | None = None) -> str
 	else:
 		cc = _country_code(default_country_code)
 		if cc is None:
-			raise ValueError("invalid mobile number: use the international format (+country code)")
+			raise ValueError(_("invalid mobile number: use the international format (+country code)"))
 		if raw.startswith("0"):
 			digits = cc + raw[1:]
 		elif raw.startswith(cc):
@@ -67,7 +67,7 @@ def normalize_mobile(value: str, default_country_code: str | None = None) -> str
 		else:
 			digits = cc + raw
 	if not digits.isdigit() or not 10 <= len(digits) <= 15:
-		raise ValueError("invalid mobile number")
+		raise ValueError(_("invalid mobile number"))
 	return "+" + digits
 
 
@@ -199,8 +199,25 @@ def find_or_create_user(
 
 
 def check_password(user: str, password: str) -> None:
-	"""Frappe's LoginManager owns the lockout and the disabled check."""
+	"""Verify `password` for the User named `user` (its name, not a mobile or username);
+	raise frappe.AuthenticationError otherwise.
+
+	The lockout (per user and per IP) and the disabled check are Frappe's LoginManager's,
+	but its authenticate() reads the request's form_dict, which a JSON body fills:
+	- it falls back to form_dict["usr"]/["pwd"] when user or pwd is falsy, so a blank user
+	  or an empty password is refused here before it is called (otherwise a body carrying
+	  the attacker's own usr/pwd would 'verify' `user`);
+	- it skips the per-user lockout when the user is under 2FA and "otp" is in form_dict.
+	So this call CONSUMES form_dict's "otp", "usr" and "pwd" keys: they are removed before
+	authenticate() and not restored. As a second guard the user LoginManager authenticated
+	must be `user` itself."""
 	login_manager = getattr(frappe.local, "login_manager", None)
 	if login_manager is None:
 		raise frappe.AuthenticationError(_("No request context for authentication"))
+	if not isinstance(user, str) or not user.strip() or not isinstance(password, str) or not password:
+		raise frappe.AuthenticationError(_("Invalid credentials"))
+	for key in ("otp", "usr", "pwd"):
+		frappe.local.form_dict.pop(key, None)
 	login_manager.authenticate(user=user, pwd=password)
+	if login_manager.user != user:
+		raise frappe.AuthenticationError(_("Invalid credentials"))

@@ -7,6 +7,8 @@ import secrets
 import time
 from collections.abc import Callable
 
+from frappe import _
+
 from frappeapi import state
 from frappeapi.errors import ServiceUnavailable
 from frappeapi.identity import normalize_mobile
@@ -57,7 +59,7 @@ def issue(
 		if isinstance(e, ServiceUnavailable):
 			raise
 		raise ServiceUnavailable(
-			"The SMS could not be sent"
+			_("The SMS could not be sent")
 		) from None  # the gateway error may echo the SMS body (the code)
 
 

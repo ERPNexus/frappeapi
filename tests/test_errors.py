@@ -9,6 +9,12 @@ def test_registry_is_core_only():
 	assert errors.status("service_unavailable") == 503
 
 
+def test_internal_error_is_a_core_code():
+	# ApiError's default code: an unregistered default would make status() raise KeyError.
+	assert errors.status("internal_error") == 500
+	assert errors.status(errors.ApiError.code) == errors.ApiError.status
+
+
 def test_legacy_rewrite_per_app():
 	errors.register("app_a", {"old_conflict": 409}, {"idempotency_conflict": "old_conflict"})
 	errors.register("app_b", legacy_codes={"unauthenticated": "old_auth"})

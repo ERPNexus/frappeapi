@@ -25,8 +25,10 @@ def body_hash(body) -> str:
 
 def replay(stored_hash: str, stored_response, body):
 	"""Call when a record for this client_operation_id already exists."""
+	from frappe import _
+
 	from frappeapi.errors import IdempotencyConflict
 
 	if stored_hash != body_hash(body):
-		raise IdempotencyConflict("This operation id was already used with a different payload")
+		raise IdempotencyConflict(_("This operation id was already used with a different payload"))
 	return stored_response

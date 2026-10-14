@@ -14,12 +14,15 @@ with suppress(ModuleNotFoundError):  # pragma: nocover
 
 try:
 	import frappe  # type: ignore[import-not-found]
-	from frappe import whitelist  # type: ignore[import-not-found]
+	from frappe import _, whitelist  # type: ignore[import-not-found]
 except ImportError:
 	from unittest.mock import MagicMock
 
 	frappe = MagicMock()
 	whitelist = MagicMock()
+
+	def _(msg: str, *args, **kwargs) -> str:
+		return msg
 
 
 from fastapi import params
@@ -342,6 +345,34 @@ def parse_and_validate_request(
 	return SolvedDependency(values=values, errors=errors, background_tasks=None, response=response, dependency_cache={})
 
 
+def set_request_language() -> None:
+	"""Set frappe.local.lang from Accept-Language, for logged-in requests too.
+
+	Frappe reads the header only for Guest requests; a session uses User/System language.
+	The first acceptable language (highest q, q > 0, not '*') that is enabled on the site
+	wins, exactly or by its parent ('ar-EG' -> 'ar'). An explicit `_lang` form param
+	(Frappe's own override) still wins; no header or no match leaves Frappe's choice.
+	Never raises: any failure (e.g. a DB error on a cold language cache) leaves Frappe's choice."""
+	try:
+		from frappe.translate import get_all_languages, get_parent_language
+
+		request = getattr(frappe.local, "request", None)
+		if request is None or frappe.form_dict.get("_lang"):
+			return
+		accepted = [tag for tag, q in request.accept_languages if q > 0 and tag != "*"]
+		if not accepted:
+			return
+		enabled = {code.lower(): code for code in get_all_languages() or []}
+		for tag in accepted:
+			lang = enabled.get(tag.lower()) or enabled.get((get_parent_language(tag) or "").lower())
+			if lang:
+				frappe.local.lang = lang
+				return
+	except Exception:
+		with suppress(Exception):
+			frappe.logger("frappeapi").warning("Accept-Language ignored", exc_info=True)
+
+
 class APIRoute(FastAPIRoute):
 	contract_app: Optional[str] = None
 
@@ -516,11 +547,21 @@ class APIRoute(FastAPIRoute):
 		self.exception_handlers = {} if exception_handlers is None else exception_handlers
 
 	def handle_request(self, *args, **kwargs) -> WerkzeugResponse:
+		# First, so _() in the route, in contract.run (426) and in every error handler uses it.
+		set_request_language()
 		if not self.contract_app:
-			return self._handle_request(*args, **kwargs)
-		from frappeapi import contract
+			response = self._handle_request(*args, **kwargs)
+		else:
+			from frappeapi import contract
 
-		return contract.run(self.contract_app, lambda: self._handle_request(*args, **kwargs), self.exception_handlers)
+			response = contract.run(
+				self.contract_app, lambda: self._handle_request(*args, **kwargs), self.exception_handlers
+			)
+		# The body depends on Accept-Language: caches must not serve one user's language to another.
+		# HeaderSet.add appends to an existing Vary (case-insensitive, no duplicates).
+		if isinstance(response, WerkzeugResponse):
+			response.vary.add("Accept-Language")
+		return response
 
 	def _handle_request(self, *args, **kwargs) -> WerkzeugResponse:
 		# Runtime warning if a dotted path is called for an endpoint that was
@@ -612,7 +653,9 @@ class APIRoute(FastAPIRoute):
 									# Handle cases where 'read' is not available
 									raise HTTPException(
 										status_code=400,
-										detail=f"Cannot process the uploaded file for field '{field_name}'.",
+										detail=_("Cannot process the uploaded file for field '{0}'.").format(
+											field_name
+										),
 									)
 						parsed_structured_body = FormData(_items)
 						body_for_request_validation_error = parsed_structured_body
@@ -664,7 +707,9 @@ class APIRoute(FastAPIRoute):
 		except HTTPException:
 			raise
 		except Exception as e:
-			http_error = HTTPException(status_code=400, detail="There was an error parsing the body or handling files.")
+			http_error = HTTPException(
+				status_code=400, detail=_("There was an error parsing the body or handling files.")
+			)
 			raise http_error from e
 
 		with ExitStack() as exit_stack_validation:
@@ -789,7 +834,7 @@ class APIRoute(FastAPIRoute):
 			traceback.print_stack()
 			traceback.print_exc()
 
-			return PlainTextResponse(content="Internal server error", status_code=500)
+			return PlainTextResponse(content=_("Internal server error"), status_code=500)
 
 		return response
 

@@ -24,6 +24,29 @@ Every `FrappeAPI` app, with or without `contract_app`, renders an `errors.ApiErr
 
 Mobile numbers: `identity.normalize_mobile(value, default_country_code=None)` turns national forms (`010…`, `05…`) into `+CC…` using, in order: the `default_country_code` argument (e.g. the Company's country), `frappe.conf.frappeapi_default_country_code`, then the dial code of System Settings > Country (from Frappe's `country_info.json`). With none of them, only international forms (`+CC…` or `00CC…`) are accepted.
 
+## Response language
+
+Every `FrappeAPI` route, logged-in or Guest, sets `frappe.local.lang` from the request's `Accept-Language` header before the route runs. Frappe itself reads the header only for Guest requests.
+
+- The first tag in q-value order that is enabled on the site wins; `q=0` and `*` are skipped.
+- A tag can match exactly or through its parent language, so `ar-EG` gives `ar`.
+- That language applies to everything the route does in that request, not only the response: `_()` in route code, `ApiError` messages, the contract's 426, and any translated text the route saves or sends (titles, comments, notifications, `msgprint`, after-request hooks).
+- For Guests the header beats Frappe's `preferred_language` cookie on these routes.
+- A `_lang` request parameter blocks the header, even one Frappe rejects as unknown; then the user gets their User or System language.
+- With no header, no enabled match, or any error while matching, the language stays as Frappe chose it: User language, then System Settings.
+- Browsers send this header automatically, so a desk user calling a FrappeAPI route gets the browser's language rather than their User language.
+- Every FrappeAPI response carries `Vary: Accept-Language`, appended to any `Vary` already set, so shared caches keep the languages apart.
+
+## Changes in 0.6.0
+
+- User-visible messages in frappeapi are wrapped in `_()` and translatable.
+- `internal_error` (500) is a core error code; apps can no longer register it as their own code or legacy spelling.
+- Importing frappeapi with no site bound (e.g. `bench generate-pot-file`) no longer crashes; the patch install is skipped.
+- The test suite requires `FRAPPEAPI_TEST_SITE`; there is no default site.
+- `Accept-Language` sets the request language on every FrappeAPI route, logged-in requests included (see Response language).
+- Every FrappeAPI response carries `Vary: Accept-Language`.
+- `identity.check_password` refuses an empty user or password and checks that the authenticated user is the one asked for.
+
 ## Documentation
 
 [Documentation](https://0xsirsaif.github.io/frappeapi/)

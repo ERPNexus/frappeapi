@@ -1,4 +1,5 @@
 import random
+import secrets
 from unittest.mock import patch
 
 import frappe
@@ -222,6 +223,155 @@ def test_check_password_needs_login_manager():
 	frappe.local.login_manager = None
 	with pytest.raises(frappe.AuthenticationError):
 		identity.check_password("Administrator", "x")
+
+
+IP = "203.0.113.7"  # TEST-NET-3: the IP lockout tracker's key
+IP2 = "203.0.113.8"  # a second client, so a user lockout is seen apart from the IP one
+
+
+@pytest.fixture
+def login(monkeypatch):
+	"""A real LoginManager (built without a request) and two users with known passwords.
+	LoginManager.fail() commits; commit is a no-op here so the rollback fixture undoes it all."""
+	from frappe.auth import LoginManager
+	from frappe.utils.password import update_password
+
+	monkeypatch.setattr(frappe.db, "commit", lambda *a, **k: None)
+	monkeypatch.setattr(frappe.local, "request_ip", IP, raising=False)
+	monkeypatch.setattr(frappe.local, "form_dict", frappe._dict())
+	lm = LoginManager.__new__(LoginManager)  # __init__ needs a request
+	lm.user = None
+	frappe.local.login_manager = lm
+	users = {}
+	for who in ("victim", "attacker"):
+		name = f"fa-pw-{who}-{RUN}@example.com"
+		_user(name, None)
+		pwd = f"Pw-{who}-{secrets.token_urlsafe(12)}"
+		update_password(name, pwd)
+		users[who] = (name, pwd)
+	try:
+		yield lm, users
+	finally:
+		frappe.local.login_manager = None
+		frappe.db.rollback()  # before dropping cached System Settings, so nothing re-reads the test values
+		frappe.clear_document_cache("System Settings", "System Settings")
+		frappe.db.value_cache.pop("System Settings", None)
+		for key in [u for u, _p in users.values()] + [IP, IP2]:
+			frappe.cache.hdel("login_failed_count", key)
+			frappe.cache.hdel("login_failed_time", key)
+
+
+def _failures(user):
+	from frappe.auth import LoginAttemptTracker
+
+	return LoginAttemptTracker(user).login_failed_count or 0
+
+
+def _attacker_in_body(monkeypatch, users):
+	"""A JSON body fills form_dict: the attacker adds usr/pwd for their own account."""
+	monkeypatch.setattr(frappe.local, "form_dict", frappe._dict(usr=users["attacker"][0], pwd=users["attacker"][1]))
+
+
+@pytest.mark.parametrize("empty", ["", None])
+def test_check_password_empty_password_ignores_form_dict(login, monkeypatch, empty):
+	"""LoginManager.authenticate falls back to form_dict usr/pwd when pwd is falsy, so the
+	attacker's own credentials 'verified' the victim, and the victim's lockout never moved."""
+	lm, users = login
+	_attacker_in_body(monkeypatch, users)
+	with pytest.raises(frappe.AuthenticationError):
+		identity.check_password(users["victim"][0], empty)
+	assert lm.user is None  # never authenticated as anyone
+
+
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n", None])
+def test_check_password_blank_user_refused(login, monkeypatch, blank):
+	lm, users = login
+	_attacker_in_body(monkeypatch, users)
+	with pytest.raises(frappe.AuthenticationError):
+		identity.check_password(blank, users["attacker"][1])
+	assert lm.user is None
+
+
+def test_check_password_refuses_a_different_authenticated_user(login, monkeypatch):
+	lm, users = login
+	monkeypatch.setattr(type(lm), "authenticate", lambda self, user, pwd: setattr(self, "user", "Administrator"))
+	with pytest.raises(frappe.AuthenticationError):
+		identity.check_password(*users["victim"])
+
+
+def test_check_password_correct_credentials_pass(login):
+	lm, users = login
+	victim, pwd = users["victim"]
+	identity.check_password(victim, pwd)
+	assert lm.user == victim
+
+
+def test_check_password_wrong_password_counts_toward_lockout(login):
+	_lm, users = login
+	victim = users["victim"][0]
+	before = _failures(victim)
+	with pytest.raises(frappe.AuthenticationError):
+		identity.check_password(victim, "not-the-password")
+	assert _failures(victim) == before + 1
+
+
+def _two_factor_for(user):
+	"""Frappe's 2FA: System Settings > enable_two_factor_auth and a role with two_factor_auth."""
+	from frappe.twofactor import should_run_2fa
+
+	frappe.db.set_single_value("System Settings", {"enable_two_factor_auth": 1, "bypass_2fa_for_retricted_ip_users": 0})
+	role = f"fa-2fa-{RUN}"
+	frappe.get_doc({"doctype": "Role", "role_name": role, "two_factor_auth": 1}).insert(ignore_permissions=True)
+	frappe.get_doc("User", user).add_roles(role)
+	assert should_run_2fa(user)
+
+
+def test_check_password_otp_in_body_does_not_switch_off_the_lockout(login, monkeypatch):
+	"""authenticate() skips the user's tracker when should_run_2fa(user) and "otp" is in form_dict:
+	an otp key in a JSON body would switch off the per-user lockout for 2FA users."""
+	_lm, users = login
+	victim = users["victim"][0]
+	_two_factor_for(victim)
+	monkeypatch.setattr(frappe.local, "form_dict", frappe._dict(otp="123456", usr="x", pwd="y", keep=1))
+	before = _failures(victim)
+	with pytest.raises(frappe.AuthenticationError):
+		identity.check_password(victim, "not-the-password")
+	assert _failures(victim) == before + 1
+	assert dict(frappe.local.form_dict) == {"keep": 1}  # otp/usr/pwd consumed, the rest untouched
+
+
+def test_check_password_consumes_otp_usr_pwd(login, monkeypatch):
+	lm, users = login
+	monkeypatch.setattr(frappe.local, "form_dict", frappe._dict(otp="1", usr="a", pwd="b"))
+	identity.check_password(*users["victim"])
+	assert lm.user == users["victim"][0]
+	assert not frappe.local.form_dict
+
+
+def test_check_password_locked_out_user_refused(login, monkeypatch):
+	_lm, users = login
+	victim, pwd = users["victim"]
+	frappe.db.set_single_value("System Settings", {"allow_consecutive_login_attempts": 3, "allow_login_after_fail": 60})
+	for _i in range(4):  # Frappe locks once failures exceed the limit
+		with pytest.raises(frappe.AuthenticationError):
+			identity.check_password(victim, "not-the-password")
+	monkeypatch.setattr(frappe.local, "request_ip", IP2)  # a fresh IP: only the user's own lockout applies
+	with pytest.raises(frappe.SecurityException):
+		identity.check_password(victim, pwd)
+
+
+def test_check_password_disabled_user_refused(login):
+	from frappe.utils.password import update_password
+
+	name, pwd = f"fa-pw-disabled-{RUN}@example.com", f"Pw-d-{secrets.token_urlsafe(12)}"
+	_user(name, None, enabled=0)
+	update_password(name, pwd)
+	try:
+		with pytest.raises(frappe.AuthenticationError):
+			identity.check_password(name, pwd)
+	finally:
+		frappe.cache.hdel("login_failed_count", name)
+		frappe.cache.hdel("login_failed_time", name)
 
 
 def test_state_refuses_without_redis_config(monkeypatch):
