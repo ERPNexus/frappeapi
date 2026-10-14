@@ -10,6 +10,7 @@ import re
 import uuid
 
 import frappe
+from frappe import _
 
 from frappeapi import errors
 from frappeapi.exception_handler import http_exception_handler, request_validation_exception_handler
@@ -108,7 +109,7 @@ def run(app: str, call, handlers=None):
 	mode = policy(client, rel)
 	if mode == "upgrade":
 		minimum = rel["clients"][client[0]]["minimum"]
-		response = errors.envelope("upgrade_required", "Please update the app", 426, {"minimum_version": minimum})
+		response = errors.envelope("upgrade_required", _("Please update the app"), 426, {"minimum_version": minimum})
 	else:
 		try:
 			response = call()

@@ -278,7 +278,13 @@ def _install_patch() -> None:
 	The patch is installed once per process and skipped during migrations.
 	"""
 	# Skip patching during migrations
-	if hasattr(frappe, "flags") and getattr(frappe.flags, "in_migrate", False):
+	# frappe.flags is a LocalProxy: with no site bound (e.g. `bench generate-pot-file`)
+	# reading it raises RuntimeError("object is not bound"), which hasattr() lets through.
+	try:
+		in_migrate = bool(getattr(frappe.flags, "in_migrate", False))
+	except RuntimeError:
+		in_migrate = False
+	if in_migrate:
 		logger.info("Skipping FrappeAPI patch installation during migration")
 		return
 

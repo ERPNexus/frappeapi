@@ -308,7 +308,8 @@ def test_opt_out_api_error_is_its_envelope(monkeypatch):
 
 
 def _json_headers(body):
-	return [("Content-Length", str(len(body))), ("Content-Type", "application/json")]
+	# Vary is added on every FrappeAPI response (0.5.3, Accept-Language), opt-out apps included.
+	return [("Content-Length", str(len(body))), ("Content-Type", "application/json"), ("Vary", "Accept-Language")]
 
 
 _INT = "Input should be a valid integer, unable to parse string as an integer"

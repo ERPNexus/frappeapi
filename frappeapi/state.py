@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from functools import lru_cache
 
 import frappe
+from frappe import _
 from redis import Redis
 from redis.exceptions import RedisError
 
@@ -26,7 +27,7 @@ def _client(url: str) -> Redis:
 def redis() -> Redis:
 	url = frappe.conf.get("frappeapi_redis") or frappe.conf.get("redis_queue")
 	if not url:
-		raise ServiceUnavailable("No Redis configured for frappeapi state")
+		raise ServiceUnavailable(_("No Redis configured for frappeapi state"))
 	return _client(url)
 
 
@@ -42,4 +43,4 @@ def guarded():
 	try:
 		yield
 	except RedisError as e:
-		raise ServiceUnavailable("The service is temporarily unavailable") from e
+		raise ServiceUnavailable(_("The service is temporarily unavailable")) from e
